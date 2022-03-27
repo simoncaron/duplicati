@@ -134,7 +134,7 @@ namespace Duplicati.Library.Backend
 
             // Build URL
             var u = new Utility.Uri(url);
-            m_path = u.HostAndPath; // Host and path of "jottacloud://folder/subfolder" is "folder/subfolder", so the actual folder path within the mount point.
+            m_path = u.HostAndPath; // Host and path of "jottacloud://folder/subfolder" is "folder/subfolder", so the actual folder path within the mount point.z
             if (string.IsNullOrEmpty(m_path)) // Require a folder. Actually it is possible to store files directly on the root level of the mount point, but that does not seem to be a good option.
                 throw new UserInformationException(Strings.Jottacloud.NoPathError, "JottaNoPath");
             m_path = Util.AppendDirSeparator(m_path, "/");
@@ -147,16 +147,25 @@ namespace Duplicati.Library.Backend
                 else if (options.ContainsKey("auth-password"))
                     m_userInfo.Password = options["auth-password"];
             }
-            else
+            else if (options.ContainsKey("auth-username"))
+            {    
+                m_userInfo = new System.Net.NetworkCredential();
+                m_userInfo.UserName = options["auth-username"];
+                if (options.ContainsKey("auth-password"))
+                    m_userInfo.Password = options["auth-password"];
+            } 
+            else if (options.ContainsKey("auth-token"))
             {
-                if (options.ContainsKey("auth-username"))
-                {
-                    m_userInfo = new System.Net.NetworkCredential();
-                    m_userInfo.UserName = options["auth-username"];
-                    if (options.ContainsKey("auth-password"))
-                        m_userInfo.Password = options["auth-password"];
-                }
+                m_userInfo = new System.Net.NetworkCredential();
+                
+                string content = FromBase64(options["auth-token"]);
+                var personalLoginToken = JsonConvert.DeserializeObject<PersonalLoginToken>(rawdata);
+
+                m_userInfo.username = personalLoginToken.Username;
+                m_userInfo.password = personalLoginToken.AuthToken;
+
             }
+
             if (m_userInfo == null || string.IsNullOrEmpty(m_userInfo.UserName))
                 throw new UserInformationException(Strings.Jottacloud.NoUsernameError, "JottaNoUsername");
             if (m_userInfo == null || string.IsNullOrEmpty(m_userInfo.Password))
@@ -575,6 +584,18 @@ namespace Duplicati.Library.Backend
                 }
                 catch { }
             }
+        }
+        private class PersonalLoginToken
+        {
+            [JsonProperty("username")]
+            public string Username { get; set; }
+            [JsonProperty("realm")]
+            public int Realm { get; set; }
+            [JsonProperty("well_known_link")]
+            public string WellKnownLink { get; set; }
+            [JsonProperty("auth_token")]
+            public string AuthToken { get; set; }
+
         }
     }
 }
