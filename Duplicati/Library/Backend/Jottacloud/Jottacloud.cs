@@ -20,6 +20,7 @@
 using Duplicati.Library.Common.IO;
 using Duplicati.Library.Interface;
 using Duplicati.Library.Localization.Short;
+using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
 using System.Net;
@@ -138,31 +139,25 @@ namespace Duplicati.Library.Backend
             if (string.IsNullOrEmpty(m_path)) // Require a folder. Actually it is possible to store files directly on the root level of the mount point, but that does not seem to be a good option.
                 throw new UserInformationException(Strings.Jottacloud.NoPathError, "JottaNoPath");
             m_path = Util.AppendDirSeparator(m_path, "/");
-            if (!string.IsNullOrEmpty(u.Username))
+
+            if (options.ContainsKey("jottacloud-personal-token"))
             {
                 m_userInfo = new System.Net.NetworkCredential();
-                m_userInfo.UserName = u.Username;
-                if (!string.IsNullOrEmpty(u.Password))
-                    m_userInfo.Password = u.Password;
-                else if (options.ContainsKey("auth-password"))
-                    m_userInfo.Password = options["auth-password"];
+
+                var bytes = Convert.FromBase64String(options["jottacloud-personal-token"]);
+                var parsedToken = System.Text.Encoding.UTF8.GetString(bytes);
+                var personalLoginToken = JsonConvert.DeserializeObject<PersonalLoginToken>(parsedToken);
+
+                m_userInfo.UserName = personalLoginToken.Username;
+                m_userInfo.Password = personalLoginToken.AuthToken;
             }
-            else
-            {
-                if (options.ContainsKey("auth-username"))
-                {
-                    m_userInfo = new System.Net.NetworkCredential();
-                    m_userInfo.UserName = options["auth-username"];
-                    if (options.ContainsKey("auth-password"))
-                        m_userInfo.Password = options["auth-password"];
-                }
-            }
-            if (m_userInfo == null || string.IsNullOrEmpty(m_userInfo.UserName))
-                throw new UserInformationException(Strings.Jottacloud.NoUsernameError, "JottaNoUsername");
-            if (m_userInfo == null || string.IsNullOrEmpty(m_userInfo.Password))
-                throw new UserInformationException(Strings.Jottacloud.NoPasswordError, "JottaNoPassword");
+
+            if (m_userInfo == null || string.IsNullOrEmpty(m_userInfo.UserName) || string.IsNullOrEmpty(m_userInfo.Password))
+                throw new UserInformationException(Strings.Jottacloud.NoPersonalTokenError, "JottaNoPersonalLoginToken");
+
             if (m_userInfo != null) // Bugfix, see http://connect.microsoft.com/VisualStudio/feedback/details/695227/networkcredential-default-constructor-leaves-domain-null-leading-to-null-object-reference-exceptions-in-framework-code
                 m_userInfo.Domain = "";
+
             m_url_device = JFS_ROOT + "/" + m_userInfo.UserName + "/" + m_device;
             m_url        = m_url_device + "/" + m_mountPoint + "/" + m_path;
             m_url_upload = JFS_ROOT_UPLOAD + "/" + m_userInfo.UserName + "/" + m_device + "/" + m_mountPoint + "/" + m_path; // Different hostname, else identical to m_url.
@@ -575,6 +570,18 @@ namespace Duplicati.Library.Backend
                 }
                 catch { }
             }
+        }
+        private class PersonalLoginToken
+        {
+            [JsonProperty("username")]
+            public string Username { get; set; }
+            [JsonProperty("realm")]
+            public string Realm { get; set; }
+            [JsonProperty("well_known_link")]
+            public string WellKnownLink { get; set; }
+            [JsonProperty("auth_token")]
+            public string AuthToken { get; set; }
+
         }
     }
 }
