@@ -21,9 +21,12 @@ using Duplicati.Library.Common.IO;
 using Duplicati.Library.Interface;
 using Duplicati.Library.Localization.Short;
 using Newtonsoft.Json;
+using OAuth2ClientHandler;
+using OAuth2ClientHandler.Authorizer;
 using System;
 using System.Collections.Generic;
 using System.Net;
+using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 namespace Duplicati.Library.Backend
@@ -34,6 +37,9 @@ namespace Duplicati.Library.Backend
     {
         private const string JFS_ROOT = "https://jfs.jottacloud.com/jfs";
         private const string JFS_ROOT_UPLOAD = "https://up.jottacloud.com/jfs"; // Separate host for uploading files
+        private const string JFS_DEFAULT_TOKEN_URL = "https://id.jottacloud.com/auth/realms/jottacloud/protocol/openid-connect/token";
+        private const string JFS_DEFAULT_AUTHORIZATION_URL = "https://id.jottacloud.com/auth/realms/jottacloud/protocol/openid-connect/token";
+        private const string JFS_DEFAULT_CLIENT_ID = "jottacli";
         private const string API_VERSION = "2.4"; // Hard coded per 09. March 2017.
         private const string JFS_BUILTIN_DEVICE = "Jotta"; // The built-in device used for the built-in Sync and Archive mount points.
         private static readonly string JFS_DEFAULT_BUILTIN_MOUNT_POINT = "Archive"; // When using the built-in device we pick this mount point as our default.
@@ -44,6 +50,7 @@ namespace Duplicati.Library.Backend
         private const string JFS_MOUNT_POINT_OPTION = "jottacloud-mountpoint";
         private const string JFS_THREADS = "jottacloud-threads";
         private const string JFS_CHUNKSIZE = "jottacloud-chunksize";
+        private const string JFS_PERSONAL_LOGIN_TOKEN = "jottacloud-personal-token";
         private const string JFS_DATE_FORMAT = "yyyy'-'MM'-'dd-'T'HH':'mm':'ssK";
         private readonly string m_device;
         private readonly bool m_device_builtin;
@@ -52,7 +59,8 @@ namespace Duplicati.Library.Backend
         private readonly string m_url_device;
         private readonly string m_url;
         private readonly string m_url_upload;
-        private readonly System.Net.NetworkCredential m_userInfo;
+        private readonly LoginToken m_loginToken;
+        private readonly HttpClient m_client;
         private readonly byte[] m_copybuffer = new byte[Duplicati.Library.Utility.Utility.DEFAULT_BUFFER_SIZE];
 
         private static readonly string JFS_DEFAULT_CHUNKSIZE = "5mb";
@@ -140,27 +148,36 @@ namespace Duplicati.Library.Backend
                 throw new UserInformationException(Strings.Jottacloud.NoPathError, "JottaNoPath");
             m_path = Util.AppendDirSeparator(m_path, "/");
 
-            if (options.ContainsKey("jottacloud-personal-token"))
+            if (options.ContainsKey(JFS_PERSONAL_LOGIN_TOKEN))
             {
-                m_userInfo = new System.Net.NetworkCredential();
-
-                var bytes = Convert.FromBase64String(options["jottacloud-personal-token"]);
+                var bytes = Convert.FromBase64String(options[JFS_PERSONAL_LOGIN_TOKEN]);
                 var parsedToken = System.Text.Encoding.UTF8.GetString(bytes);
-                var personalLoginToken = JsonConvert.DeserializeObject<PersonalLoginToken>(parsedToken);
-
-                m_userInfo.UserName = personalLoginToken.Username;
-                m_userInfo.Password = personalLoginToken.AuthToken;
+                m_loginToken = JsonConvert.DeserializeObject<LoginToken>(parsedToken);
+            }
+            else
+            {
+                throw new UserInformationException(Strings.Jottacloud.NoPersonalTokenError, "JottaNoPersonalLoginToken");
             }
 
-            if (m_userInfo == null || string.IsNullOrEmpty(m_userInfo.UserName) || string.IsNullOrEmpty(m_userInfo.Password))
-                throw new UserInformationException(Strings.Jottacloud.NoPersonalTokenError, "JottaNoPersonalLoginToken");
+            var authOptions = new OAuthHttpHandlerOptions
+            {
+                AuthorizerOptions = new AuthorizerOptions
+                {
+                    AuthorizeEndpointUrl = new Uri(JFS_DEFAULT_AUTHORIZATION_URL),
+                    TokenEndpointUrl = new Uri(JFS_DEFAULT_TOKEN_URL),
+                    ClientId = JFS_DEFAULT_CLIENT_ID,
+                    GrantType = GrantType.ResourceOwnerPasswordCredentials,
+                    Scope = new[] { "offline_access+openid" },
+                    Password = m_loginToken.AuthToken,
+                    Username = m_loginToken.Username
+                }
+            };
 
-            if (m_userInfo != null) // Bugfix, see http://connect.microsoft.com/VisualStudio/feedback/details/695227/networkcredential-default-constructor-leaves-domain-null-leading-to-null-object-reference-exceptions-in-framework-code
-                m_userInfo.Domain = "";
+            m_client = new HttpClient(new OAuthHttpHandler(authOptions));
 
-            m_url_device = JFS_ROOT + "/" + m_userInfo.UserName + "/" + m_device;
+            m_url_device = JFS_ROOT + "/" + m_loginToken.Username + "/" + m_device;
             m_url        = m_url_device + "/" + m_mountPoint + "/" + m_path;
-            m_url_upload = JFS_ROOT_UPLOAD + "/" + m_userInfo.UserName + "/" + m_device + "/" + m_mountPoint + "/" + m_path; // Different hostname, else identical to m_url.
+            m_url_upload = JFS_ROOT_UPLOAD + "/" + m_loginToken.Username + "/" + m_device + "/" + m_mountPoint + "/" + m_path; // Different hostname, else identical to m_url.
 
             m_threads = int.Parse(options.ContainsKey(JFS_THREADS) ? options[JFS_THREADS] : JFS_DEFAULT_THREADS);
 
@@ -377,7 +394,6 @@ namespace Duplicati.Library.Backend
         {
             System.Net.HttpWebRequest req = (System.Net.HttpWebRequest)System.Net.HttpWebRequest.Create(url + (string.IsNullOrEmpty(queryparams) || queryparams.Trim().Length == 0 ? "" : "?" + queryparams));
             req.Method = method;
-            req.Credentials = m_userInfo;
             req.PreAuthenticate = true; // We need this under Mono for some reason, and it appears some servers require this as well
             req.KeepAlive = false;
             req.UserAgent = "Duplicati Jottacloud Client v" + System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
@@ -571,7 +587,7 @@ namespace Duplicati.Library.Backend
                 catch { }
             }
         }
-        private class PersonalLoginToken
+        private class LoginToken
         {
             [JsonProperty("username")]
             public string Username { get; set; }
