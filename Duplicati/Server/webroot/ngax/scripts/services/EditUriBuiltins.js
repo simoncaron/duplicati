@@ -483,7 +483,12 @@ backupApp.service('EditUriBuiltins', function (AppService, AppUtils, SystemInfo,
     };
 
     EditUriBackendConfig.parsers['jottacloud'] = function (scope, module, server, port, path, options) {
-        EditUriBackendConfig.mergeServerAndPath(scope);
+        if (options['--jottacloud-personal-login-token'])
+            scope.jottacloud_personal_login_token = options['--jottacloud-personal-login-token'];
+
+        var nukeopts = ['--jottacloud-personal-login-token'];
+        for (var x in nukeopts)
+            delete options[nukeopts[x]];
     };
 
     EditUriBackendConfig.parsers['rclone'] = function (scope, module, server, port, path, options) {
@@ -866,7 +871,9 @@ backupApp.service('EditUriBuiltins', function (AppService, AppUtils, SystemInfo,
     }
 
     EditUriBackendConfig.builders['jottacloud'] = function (scope) {
-        var opts = {};
+        var opts = {
+            '--jottacloud-personal-login-token': scope.jottacloud_personal_login_token
+        };
 
         EditUriBackendConfig.merge_in_advanced_options(scope, opts);
 
@@ -1160,8 +1167,7 @@ backupApp.service('EditUriBuiltins', function (AppService, AppUtils, SystemInfo,
     EditUriBackendConfig.validaters['jottacloud'] = function (scope, continuation) {
         scope.Path = scope.Path || '';
         var res =
-            EditUriBackendConfig.require_field(scope, 'Username', gettextCatalog.getString('Username')) &&
-            EditUriBackendConfig.require_field(scope, 'Password', gettextCatalog.getString('Password'));
+            EditUriBackendConfig.require_field(scope, 'jottacloud_personal_login_token', gettextCatalog.getString('Personal login token'));
 
         if (res)
             continuation();
